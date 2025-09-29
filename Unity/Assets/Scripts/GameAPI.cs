@@ -43,7 +43,7 @@ public class GameAPI : MonoBehaviour
 
         using (UnityWebRequest request = new UnityWebRequest($"{baseUrl}/login", "POST"))
         {
-            byte[] bodyRaw = Encoding .UTF8.GetBytes(jsonData);
+            byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonData);
             request.uploadHandler = new UploadHandlerRaw(bodyRaw);
             request.downloadHandler = new DownloadHandlerBuffer();
             request.SetRequestHeader("Content-Type", "application/json");
