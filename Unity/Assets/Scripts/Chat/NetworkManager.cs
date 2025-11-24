@@ -12,24 +12,25 @@ public class NetworkMessage
     public string type;
     public string playerId;
     public string message;
-    public Vecter3Data position;
+    public Vector3Data position;
+    public Vector3Data rotation;    // 회전 추가
 }
 
 [Serializable]
-public class Vecter3Data
+public class Vector3Data
 {
     public float x;
     public float y;
     public float z;
 
-    public Vecter3Data(Vector3 v)
+    public Vector3Data(Vector3 v)
     {
         x = v.x;
         y = v.y;
         z = v.z;
     }
 
-    public Vector3 ToVecter3()
+    public Vector3 ToVector3()
     {
         return new Vector3(x, y, z);
     }
@@ -47,7 +48,14 @@ public class NetworkManager : MonoBehaviour
     [SerializeField] private Text chatLog;
     [SerializeField] private Text statusText;
 
+    [Header("PlayerSettings")]
+    [SerializeField] private Transform localPlayer;             // 내 플레이어
+    [SerializeField] private GameObject remotePlayerPrefabs;    // 다른 플레이어 프리팹
+    [SerializeField] private float positionSendRate = 0.1f;     // 위치 전송 간격
+
     private string myPlayerId;
+    private Dictionary<string,GameObject> remotePlayers = new Dictionary<string,GameObject>();
+    private float lastPositionSendTIme;
 
     private void Start()
     {
@@ -76,6 +84,16 @@ public class NetworkManager : MonoBehaviour
             webSocket.DispatchMessageQueue();
         }
 #endif
+
+        // 일정 간격으로 내 위치,회전값 전송
+        if(webSocket != null && webSocket.State == WebSocketState.Open && localPlayer != null)
+        {
+            if(Time.time - lastPositionSendTIme >= positionSendRate)
+            {
+                //SendPostionUpdate();
+                lastPositionSendTIme = Time.time;
+            }
+        }
     }
     private async void ConnectToServer()
     {
@@ -105,6 +123,13 @@ public class NetworkManager : MonoBehaviour
         {
             UpdateStatusText("연결 끊김", Color.red);
             AddToChatLog("[시스템] 서버와의 연결이 끊어졌습니다. ");
+
+            // 연결 끊김시 모든 원격 플레이어 제거
+            foreach(var player in remotePlayers.Values)
+            {
+                if(player != null) Destroy(player);
+            }
+            remotePlayers.Clear();
         };
 
         webSocket.OnMessage += (bytes) =>
@@ -146,13 +171,26 @@ public class NetworkManager : MonoBehaviour
 
         NetworkMessage message = new NetworkMessage
         {
-            type = "Chat",
+            type = "chat",
             message = messageInput.text
         };
 
         await webSocket.SendText(JsonConvert.SerializeObject(message));
         messageInput.text = "";
         messageInput.ActivateInputField(); //입력창 다시 활성화
+    }
+
+    private async void SendPostionUpdate()
+    {
+        if(localPlayer == null) return;
+        NetworkMessage message = new NetworkMessage
+        {
+            type = "positionUpdate",
+            position = new Vector3Data(localPlayer.position),
+            rotation = new Vector3Data(localPlayer.eulerAngles)
+        };
+
+        await webSocket.SendText(JsonConvert.SerializeObject(message));
     }
 
     private void HandleMessage(string json)
@@ -173,8 +211,24 @@ public class NetworkManager : MonoBehaviour
                     AddToChatLog($"[{displayName}] {message.message} ");
                     break;
 
+                case "playerJoin":
+                    if(message.playerId != myPlayerId)
+                    {
+                        AddToChatLog($"[시스템] {message.playerId} 님이 입장했습니다");
+                        CreateRemotePlayer(message.playerId,message.position,message.rotation);
+                    }
+                    break;
+
                 case "playerDisconnect":
                     AddToChatLog($"[시스템] {message.playerId} 님이 퇴장 했습니다. ");
+                    RemoveRemotePlayer(message.playerId);
+                    break;
+
+                case "positionUpdate":
+                    if(message.playerId != myPlayerId)
+                    {
+                        UpdateRemotePlayer(message.playerId,message.position,message.rotation);
+                    }
                     break;
             }
         }
@@ -189,6 +243,56 @@ public class NetworkManager : MonoBehaviour
         if(webSocket != null && webSocket.State == WebSocketState.Open)
         {
             await webSocket.Close();
+        }
+    }
+
+    private void CreateRemotePlayer(string playerId,Vector3Data position,Vector3Data rotation)
+    {
+        if (remotePlayers.ContainsKey(playerId)) return;
+        if(remotePlayerPrefabs == null)
+        {
+            Debug.LogError("RemotePlayerPrefab이 설정되지 않았습니다.");
+            return;
+        }
+
+        Vector3 pos = position != null ? position.ToVector3() : Vector3.zero;
+        Vector3 rot = rotation != null ? rotation.ToVector3() : Vector3.zero;
+
+        GameObject player = Instantiate(remotePlayerPrefabs, pos, Quaternion.Euler(rot));
+        player.name = "RemotePlayer_" + playerId;
+        remotePlayers.Add(playerId, player);
+
+        Debug.Log($"원격 플레이어 생성 : {playerId} at {pos}, rotation {rot}");
+    }
+
+    private void RemoveRemotePlayer(string playerId)
+    {
+        if (remotePlayers.ContainsKey(playerId))
+        {
+            Destroy(remotePlayers[playerId]);
+            remotePlayers.Remove(playerId);
+            Debug.Log($"원격 플레이어 제거 : {playerId}");
+        }
+    }
+
+    private void UpdateRemotePlayer(string playerId,Vector3Data postion,Vector3Data rotation)
+    {
+        if (!remotePlayers.ContainsKey(playerId))
+        {
+            CreateRemotePlayer(playerId, postion, rotation);
+            return;
+        }
+        GameObject player = remotePlayers[playerId];
+        if (player == null) return;
+
+        if(postion != null)             // 부드러운 이동
+        {
+            player.transform.position = Vector3.Lerp(player.transform.position, postion.ToVector3(), Time.deltaTime * 10f);
+        }
+        if(rotation != null)            // 부드러운 회전
+        {
+            Quaternion targetRotation = Quaternion.Euler(rotation.ToVector3());
+            player.transform.rotation = Quaternion.Lerp(player.transform.rotation, targetRotation, Time.deltaTime * 10f);
         }
     }
 
