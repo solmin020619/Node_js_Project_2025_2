@@ -31,8 +31,9 @@ SetupServerEvent()
         };
 
         // 기존 플레이어들 정보를 새 플레이어에게 전송
-        this.players.forEach((playerId,pid) => {
-            if(pid != playerId){
+        this.players.forEach((player,pid) => {
+            if(pid !== playerId)
+            {
                 const joinsMsg = {
                     type : 'playerJoin',
                     playerId : pid,
